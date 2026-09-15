@@ -1,8 +1,117 @@
-export class BeepEngine{
-  constructor(){this.ctx=null;this.master=null;this.volume=.8;this.muted=false;this.activeNodes=new Set()}
-  async init(){if(!('AudioContext' in window||'webkitAudioContext' in window))throw new Error('Web Audio API is not available in this browser.');const AC=window.AudioContext||window.webkitAudioContext;if(!this.ctx)this.ctx=new AC();if(this.ctx.state==='suspended')await this.ctx.resume();if(!this.master){this.master=this.ctx.createGain();this.master.gain.value=this.volume;this.master.connect(this.ctx.destination)}}
-  setVolume(v){this.volume=Math.max(0,Math.min(1,v));if(this.master)this.master.gain.value=this.volume}
-  setMuted(m){this.muted=!!m}
-  stopAll(){for(const node of this.activeNodes){try{node.stop?.()}catch{}try{node.disconnect?.()}catch{}}this.activeNodes.clear()}
-  beep(kind='mid'){if(this.muted||!this.ctx||!this.master||this.ctx.state!=='running')return;const now=this.ctx.currentTime;const config={start:{freq:880,dur:.22,peak:.82,attack:.008,release:.075,tones:[0,0]},mid:{freq:660,dur:.095,peak:.42,attack:.004,release:.04,tones:[0]},end:{freq:520,dur:.26,peak:.82,attack:.008,release:.09,tones:[0,.1]}}[kind]||null;if(!config)return;const gain=this.ctx.createGain();gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(config.peak,now+config.attack);gain.gain.setValueAtTime(config.peak,now+Math.max(config.attack,config.dur-config.release));gain.gain.exponentialRampToValueAtTime(.0001,now+config.dur);gain.connect(this.master);const nodes=[];const makeOsc=(frequency,offset=0)=>{const o=this.ctx.createOscillator();o.type=kind==='mid'?'sine':'triangle';o.frequency.setValueAtTime(frequency,now+offset);o.connect(gain);o.start(now+offset);o.stop(now+config.dur+offset);nodes.push(o);this.activeNodes.add(o);o.onended=()=>this.activeNodes.delete(o)};makeOsc(config.freq);if(config.tones.length>1)makeOsc(config.freq*0.75,config.tones[1]);}
+export class BeepEngine {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.volume = 0.8;
+    this.muted = false;
+
+    this.midpointAudio = new Audio(
+      'https://raw.githubusercontent.com/Stepzach/testertimer/main/video-output-F6DE3527-A40B-4722-B1CE-E122F7E47551-2.mp3'
+    );
+
+    this.loudAudio = new Audio(
+      'https://raw.githubusercontent.com/Stepzach/testertimer/main/video-output-812F7CAF-04AB-434E-A68C-FA2D5147695F-2.mp3'
+    );
+
+    this.midpointAudio.preload = 'auto';
+    this.loudAudio.preload = 'auto';
+
+    this.midpointAudio.volume = 0.5;
+    this.loudAudio.volume = 1.0;
+
+    this.activeAudio = new Set();
+  }
+
+  async init() {
+    // Keep the AudioContext initialization so the browser user-gesture
+    // requirement is satisfied.
+    if ('AudioContext' in window || 'webkitAudioContext' in window) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+
+      if (!this.ctx) {
+        this.ctx = new AC();
+      }
+
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+      }
+
+      if (!this.master) {
+        this.master = this.ctx.createGain();
+        this.master.connect(this.ctx.destination);
+      }
+    }
+
+    // Prime the HTMLAudio elements from the user's gesture.
+    try {
+      this.midpointAudio.load();
+      this.loudAudio.load();
+    } catch {}
+
+    return true;
+  }
+
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
+
+    // Preserve the relative loudness:
+    // midpoint = 50%
+    // start/end = 100%
+    this.midpointAudio.volume = this.volume * 0.5;
+    this.loudAudio.volume = this.volume;
+  }
+
+  setMuted(m) {
+    this.muted = !!m;
+  }
+
+  stopAll() {
+    for (const audio of this.activeAudio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {}
+    }
+
+    this.activeAudio.clear();
+  }
+
+  beep(kind = 'mid') {
+    if (this.muted) return;
+
+    const audio =
+      kind === 'mid'
+        ? this.midpointAudio
+        : this.loudAudio;
+
+    if (!audio) return;
+
+    try {
+      // Cancel any currently playing copy and restart it from the beginning.
+      audio.pause();
+      audio.currentTime = 0;
+
+      audio.volume =
+        kind === 'mid'
+          ? this.volume * 0.5
+          : this.volume;
+
+      this.activeAudio.add(audio);
+
+      const playPromise = audio.play();
+
+      if (playPromise?.catch) {
+        playPromise.catch(() => {
+          // Browser may block playback until user interaction.
+        });
+      }
+
+      const cleanup = () => {
+        this.activeAudio.delete(audio);
+        audio.removeEventListener('ended', cleanup);
+      };
+
+      audio.addEventListener('ended', cleanup);
+    } catch {}
+  }
 }
